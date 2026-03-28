@@ -1,9 +1,25 @@
 <!doctype html>
 <html lang="ko">
   <head>
-    <meta charset="UTF-8" /><meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>스마트 교과서 관리</title>
+    <meta charset="UTF-8" />
+    <link rel="icon" type="image/png" href="/icon.png" />
+    <link rel="apple-touch-icon" href="/icon.png" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no" />
+    <title>현암초 교과서 관리 시스템</title>
+    
     <script src="https://cdn.tailwindcss.com"></script>
+    
+    <style>
+      /* 모바일에서 앱처럼 보이기 위해 드래그 방지 및 터치 최적화 */
+      body {
+        -webkit-tap-highlight-color: transparent;
+        user-select: none;
+        -webkit-user-select: none;
+      }
+    </style>
   </head>
-  <body><div id="root"></div><script type="module" src="/src/main.jsx"></script></body>
+  <body>
+    <div id="root"></div>
+    <script type="module" src="/src/main.jsx"></script>
+  </body>
 </html>
