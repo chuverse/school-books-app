@@ -173,13 +173,10 @@ export default function App() {
     const configRef = doc(db, 'artifacts', appId, 'public', 'data', 'config', 'adminSettings');
     const unsubConfig = onSnapshot(configRef, async (docSnap) => {
       if (!docSnap.exists()) {
-        // 처음 앱을 실행한 경우 기본 PIN 1234로 설정
         await setDoc(configRef, { pin: "1234", authorizedUids: [] });
       } else {
         const data = docSnap.data();
         setAdminConfig(data);
-        
-        // 내 기기(user.uid)가 승인된 기기 목록에 있는지 확인 (자동 로그인)
         if (data.authorizedUids && data.authorizedUids.includes(user.uid)) {
           setIsLoggedIn(true);
         } else {
@@ -204,11 +201,9 @@ export default function App() {
         const sampleDocRef = doc(db, 'artifacts', appId, 'public', 'data', 'config', 'customSample');
         const sampleSnap = await getDoc(sampleDocRef);
         let dataToRestore = initialSampleData;
-        
         if (sampleSnap.exists() && sampleSnap.data().data) {
           dataToRestore = sampleSnap.data().data;
         }
-
         const batch = writeBatch(db);
         dataToRestore.forEach((item, idx) => batch.set(doc(colRef, item.id || `sample_${idx}`), { ...item, order: idx }));
         await batch.commit();
@@ -226,7 +221,6 @@ export default function App() {
     });
   }, [user, isLoggedIn]);
 
-  // 계산용 Hook들
   const gradeList = useMemo(() => [...new Set(inventory.map(i => i.grade))].filter(Boolean).sort(), [inventory]);
   const curriculumList = useMemo(() => [...new Set(inventory.map(i => i.curriculum))].filter(Boolean).sort(), [inventory]);
   const publisherList = useMemo(() => [...new Set(inventory.map(i => i.publisher))].filter(Boolean).sort(), [inventory]);
@@ -250,13 +244,11 @@ export default function App() {
 
   const totalStock = useMemo(() => filtered.reduce((acc, i) => acc + (i.quantity || 0), 0), [filtered]);
 
-  // --- 직관적인 4자리 PIN 로그인 처리 ---
   const handleLogin = async (e) => {
     e.preventDefault();
     if (pin.length !== 4) return alert("PIN 번호 4자리를 모두 입력해주세요.");
     
     if (adminConfig && pin === adminConfig.pin) {
-      // 내 기기(user.uid)를 승인된 기기 목록에 추가하여 자동 로그인되게 만듦
       const configRef = doc(db, 'artifacts', appId, 'public', 'data', 'config', 'adminSettings');
       const newUids = [...(adminConfig.authorizedUids || []), user.uid];
       await updateDoc(configRef, { authorizedUids: newUids });
@@ -266,7 +258,6 @@ export default function App() {
     }
   };
 
-  // --- 로그아웃 처리 (승인 목록에서 내 기기 제거) ---
   const handleLogout = async () => {
     if (!adminConfig) return;
     const configRef = doc(db, 'artifacts', appId, 'public', 'data', 'config', 'adminSettings');
@@ -274,7 +265,6 @@ export default function App() {
     await updateDoc(configRef, { authorizedUids: newUids });
   };
 
-  // --- PIN 변경 처리 ---
   const handleChangePassword = async (e) => {
     e.preventDefault();
     if (newPin.length !== 4) return alert("새로운 PIN 번호 4자리를 정확히 입력해주세요.");
@@ -433,7 +423,7 @@ export default function App() {
           <span className="text-[10px] sm:text-xs font-black text-emerald-600 uppercase tracking-widest">Live</span>
         </div>
         <div className="flex items-center gap-2">
-          {/* 비밀번호 변경 버튼 (톱니바퀴 아이콘) */}
+          {/* 비밀번호 변경 버튼 */}
           <button onClick={() => setShowPwdModal(true)} className="p-2 text-slate-500 hover:text-blue-600 bg-slate-50 rounded-full transition-colors flex items-center justify-center" title="PIN 번호 변경">
             <Settings className="w-4 h-4 sm:w-5 sm:h-5" />
           </button>
@@ -562,7 +552,7 @@ export default function App() {
           </div>
         ) : (
           <div className="bg-white rounded-[24px] sm:rounded-[32px] shadow-sm overflow-hidden border border-white">
-            {/* 📱 모바일 최적화된 리스트 헤더 (가로 스크롤 없이 한눈에!) */}
+            {/* 📱 모바일 최적화된 리스트 헤더 */}
             <div className="flex px-3 sm:px-5 py-3 bg-[#fafbfc] border-b border-[#f2f4f6] text-[11px] sm:text-[13px] font-black text-slate-600 uppercase tracking-widest sticky top-0 z-10">
               <div onClick={()=>handleSort('grade')} className="w-14 sm:w-20 text-center cursor-pointer hover:text-blue-500 shrink-0">학년 {sortConfig.key==='grade' ? (sortConfig.direction==='asc'?'↑':'↓'):''}</div>
               <div onClick={()=>handleSort('subject')} className="flex-1 text-center cursor-pointer hover:text-blue-500 min-w-0">과목 정보 {sortConfig.key==='subject' ? (sortConfig.direction==='asc'?'↑':'↓'):''}</div>
@@ -575,63 +565,75 @@ export default function App() {
                 <div className="py-24 text-center font-bold text-slate-300 animate-pulse italic">데이터 로드 중...</div>
               ) : filtered.length > 0 ? (
                 filtered.map((item) => (
-                  <div key={item.id} className="flex items-center p-2.5 sm:p-5 hover:bg-[#fafbfc] transition-colors group relative min-h-[70px]">
+                  <div key={item.id} className={`flex ${editingId === item.id ? 'flex-col p-4 bg-white shadow-lg ring-4 ring-blue-50 z-20 my-2 rounded-2xl border border-blue-100' : 'items-center p-2.5 sm:p-5 hover:bg-[#fafbfc]'} transition-all relative min-h-[70px]`}>
                     
                     {editingId === item.id ? (
-                      /* --- 📝 수정 모드 --- */
-                      <>
-                        <div className="w-14 sm:w-20 shrink-0 px-0.5">
-                          <SmartInput options={gradeList} value={editForm.grade} onChange={v=>setEditForm({...editForm, grade:v})} isCustom={editForm.cGrade} setCustom={b=>setEditForm({...editForm, cGrade:b})} placeholder="학년" />
+                      /* --- 📝 확장된 수정 모드 (버튼 겹침 현상 해결) --- */
+                      <div className="flex flex-col w-full gap-3 animate-in fade-in duration-200">
+                        <div className="flex items-center gap-2 mb-1">
+                          <Edit2 className="w-4 h-4 text-blue-500" />
+                          <span className="text-sm font-black text-blue-600">항목 수정 및 삭제</span>
                         </div>
-                        <div className="flex-1 min-w-0 px-1 sm:px-2 space-y-1 sm:space-y-2">
-                          <GridTextInput value={editForm.subject} onChange={v=>setEditForm({...editForm, subject:v})} placeholder="과목명" />
-                          <div className="flex flex-col sm:flex-row gap-1 sm:gap-2">
-                            <SmartInput options={curriculumList} value={editForm.curriculum} onChange={v=>setEditForm({...editForm, curriculum:v})} isCustom={editForm.cCurr} setCustom={b=>setEditForm({...editForm, cCurr:b})} placeholder="분류" />
-                            <SmartInput options={publisherList} value={editForm.publisher} onChange={v=>setEditForm({...editForm, publisher:v})} isCustom={editForm.cPub} setCustom={b=>setEditForm({...editForm, cPub:b})} placeholder="출판사" />
+                        <div className="flex flex-col sm:flex-row gap-2 w-full">
+                          <div className="w-full sm:w-24 shrink-0">
+                            <SmartInput options={gradeList} value={editForm.grade} onChange={v=>setEditForm({...editForm, grade:v})} isCustom={editForm.cGrade} setCustom={b=>setEditForm({...editForm, cGrade:b})} placeholder="학년" />
+                          </div>
+                          <div className="flex-1 space-y-2 min-w-0">
+                            <GridTextInput value={editForm.subject} onChange={v=>setEditForm({...editForm, subject:v})} placeholder="과목명" />
+                            <div className="flex gap-2">
+                              <SmartInput options={curriculumList} value={editForm.curriculum} onChange={v=>setEditForm({...editForm, curriculum:v})} isCustom={editForm.cCurr} setCustom={b=>setEditForm({...editForm, cCurr:b})} placeholder="분류" />
+                              <SmartInput options={publisherList} value={editForm.publisher} onChange={v=>setEditForm({...editForm, publisher:v})} isCustom={editForm.cPub} setCustom={b=>setEditForm({...editForm, cPub:b})} placeholder="출판사" />
+                            </div>
                           </div>
                         </div>
-                        <div className="w-[100px] sm:w-[140px] shrink-0 flex justify-center items-center">
-                          <button onClick={()=>saveEdit(item.id)} className="p-2 sm:p-3 bg-blue-500 text-white rounded-xl shadow-lg hover:bg-blue-600 transition-colors">
-                            <Check className="w-4 h-4 sm:w-5 sm:h-5" />
-                          </button>
+                        {/* 큼직한 하단 액션 버튼들 */}
+                        <div className="flex justify-end items-center gap-2 pt-3 mt-1 border-t border-slate-100">
+                          <button onClick={()=>setDeletingId(item.id)} className="px-4 py-2.5 bg-rose-50 text-rose-500 rounded-xl text-sm font-bold hover:bg-rose-100 flex items-center gap-1.5"><Trash2 className="w-4 h-4"/> 삭제</button>
+                          <div className="flex-1"></div>
+                          <button onClick={()=>setEditingId(null)} className="px-4 py-2.5 bg-slate-100 text-slate-500 rounded-xl text-sm font-bold hover:bg-slate-200">취소</button>
+                          <button onClick={()=>saveEdit(item.id)} className="px-6 py-2.5 bg-blue-500 text-white rounded-xl text-sm font-bold hover:bg-blue-600 shadow-md flex items-center gap-1.5"><Check className="w-4 h-4"/> 저장</button>
                         </div>
-                      </>
+                      </div>
                     ) : (
-                      /* --- 📖 일반 모드 (Flex 구조로 짤림 방지) --- */
+                      /* --- 📖 일반 모드 (가볍게 터치 시 확장) --- */
                       <>
-                        {/* 1. 학년 */}
-                        <div className="w-14 sm:w-20 flex justify-center shrink-0">
-                          <span onClick={()=>handleQuickFilter('grade', item.grade)} className="px-1.5 py-1 sm:px-3 sm:py-2 rounded-[10px] sm:rounded-xl text-[10px] sm:text-[12px] font-black cursor-pointer shadow-sm active:scale-90 bg-blue-50 text-blue-600 whitespace-nowrap overflow-hidden max-w-full truncate text-center">
-                            {item.grade === '전학년(공통)' ? '공통' : item.grade}
-                          </span>
-                        </div>
-                        
-                        {/* 2. 과목 정보 (넘치면 알아서 줄임표 처리) */}
-                        <div className="flex-1 min-w-0 px-2 flex flex-col items-center justify-center text-center">
-                          <p className="font-black text-[#191f28] text-[13px] sm:text-lg leading-tight mb-0.5 sm:mb-1 truncate w-full">{item.subject}</p>
-                          <div className="flex items-center justify-center gap-1 sm:gap-2 text-[9px] sm:text-xs font-bold text-slate-500 w-full truncate">
-                            <span onClick={()=>handleQuickFilter('curriculum', item.curriculum)} className="hover:text-blue-500 cursor-pointer truncate">{item.curriculum}</span>
-                            <span className="shrink-0 text-slate-300">·</span>
-                            <span onClick={()=>handleQuickFilter('publisher', item.publisher)} className="hover:text-blue-500 cursor-pointer truncate">{item.publisher}</span>
+                        <div 
+                          className="flex flex-1 min-w-0 items-center cursor-pointer group/info"
+                          onClick={()=>{
+                            setEditingId(item.id); 
+                            setEditForm({...item, cGrade: !gradeList.includes(item.grade), cCurr: !curriculumList.includes(item.curriculum), cPub: !publisherList.includes(item.publisher)});
+                          }}
+                          title="터치하여 수정 및 삭제"
+                        >
+                          {/* 1. 학년 */}
+                          <div className="w-14 sm:w-20 flex justify-center shrink-0">
+                            <span className="px-1.5 py-1 sm:px-3 sm:py-2 rounded-[10px] sm:rounded-xl text-[10px] sm:text-[12px] font-black shadow-sm bg-blue-50 text-blue-600 whitespace-nowrap overflow-hidden max-w-full truncate text-center">
+                              {item.grade === '전학년(공통)' ? '공통' : item.grade}
+                            </span>
+                          </div>
+                          
+                          {/* 2. 과목 정보 (터치 영역) */}
+                          <div className="flex-1 min-w-0 px-2 flex flex-col items-center justify-center text-center">
+                            <div className="flex items-center justify-center gap-1.5 w-full">
+                              <p className="font-black text-[#191f28] text-[13px] sm:text-lg leading-tight mb-0.5 sm:mb-1 truncate group-hover/info:text-blue-500 transition-colors">{item.subject}</p>
+                              {/* 작은 수정 안내 연필 아이콘 추가 */}
+                              <Edit2 className="w-3 h-3 text-slate-300 opacity-50 group-hover/info:opacity-100 group-hover/info:text-blue-500 transition-all shrink-0 mb-0.5 sm:mb-1" />
+                            </div>
+                            <div className="flex items-center justify-center gap-1 sm:gap-2 text-[9px] sm:text-xs font-bold text-slate-500 w-full truncate">
+                              <span className="truncate">{item.curriculum}</span>
+                              <span className="shrink-0 text-slate-300">·</span>
+                              <span className="truncate">{item.publisher}</span>
+                            </div>
                           </div>
                         </div>
                         
-                        {/* 3. 수량 조절 버튼 (축소 절대 안됨!) */}
-                        <div className="w-[100px] sm:w-[140px] flex items-center justify-center shrink-0">
+                        {/* 3. 수량 조절 버튼 (절대 방해받지 않음!) */}
+                        <div className="w-[100px] sm:w-[140px] flex items-center justify-center shrink-0 ml-1">
                           <div className="flex items-center justify-between bg-[#f2f4f6] rounded-full p-1 w-full max-w-[120px] transition-all focus-within:ring-2 focus-within:ring-blue-200 shadow-inner">
                             <button onClick={()=>changeQty(item.id, item.quantity, -1)} className="w-6 h-6 sm:w-8 sm:h-8 bg-white rounded-full shadow-sm flex items-center justify-center text-slate-500 active:scale-75 transition-transform shrink-0"><Minus className="w-3 h-3 sm:w-4 sm:h-4 stroke-[3]" /></button>
                             <QtyInput value={item.quantity || 0} onChange={v => handleQtyChange(item.id, v)} />
                             <button onClick={()=>changeQty(item.id, item.quantity, 1)} className="w-6 h-6 sm:w-8 sm:h-8 bg-white rounded-full shadow-sm flex items-center justify-center text-slate-500 active:scale-75 transition-transform shrink-0"><Plus className="w-3 h-3 sm:w-4 sm:h-4 stroke-[3]" /></button>
                           </div>
-                        </div>
-
-                        {/* 4. 편집/삭제 버튼 (모바일: 작게 우측 상단, PC: 마우스 오버) */}
-                        <div className="absolute right-1 top-1 sm:right-2 sm:top-2 flex gap-1 opacity-100 sm:opacity-0 group-hover:opacity-100 transition-opacity">
-                          <button onClick={()=>{
-                            setEditingId(item.id); 
-                            setEditForm({...item, cGrade: !gradeList.includes(item.grade), cCurr: !curriculumList.includes(item.curriculum), cPub: !publisherList.includes(item.publisher)});
-                          }} className="p-1 sm:p-2 text-slate-400 hover:text-blue-500 bg-white/90 rounded-lg shadow-sm transition-colors"><Edit2 className="w-3 h-3 sm:w-4 sm:h-4"/></button>
-                          <button onClick={()=>setDeletingId(item.id)} className="p-1 sm:p-2 text-slate-400 hover:text-rose-500 bg-white/90 rounded-lg shadow-sm transition-colors"><Trash2 className="w-3 h-3 sm:w-4 sm:h-4"/></button>
                         </div>
                       </>
                     )}
