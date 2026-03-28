@@ -154,6 +154,63 @@ export default function App() {
     return () => unsubscribe();
   }, []);
 
+  // 2. 실시간 데이터 구독 (로그인 된 경우만)
+  useEffect(() => {
+    if (!user) return;
+    setIsLoading(true);
+
+    const checkAndInit = async () => {
+      const colRef = collection(db, 'artifacts', appId, 'public', 'data', 'textbooks');
+      const snap = await getDocs(colRef);
+      if (snap.empty) {
+        const sampleDocRef = doc(db, 'artifacts', appId, 'public', 'data', 'config', 'customSample');
+        const sampleSnap = await getDoc(sampleDocRef);
+        let dataToRestore = initialSampleData;
+        
+        if (sampleSnap.exists() && sampleSnap.data().data) {
+          dataToRestore = sampleSnap.data().data;
+        }
+
+        const batch = writeBatch(db);
+        dataToRestore.forEach((item, idx) => batch.set(doc(colRef, item.id || `sample_${idx}`), { ...item, order: idx }));
+        await batch.commit();
+      }
+    };
+
+    checkAndInit().then(() => {
+      const colRef = collection(db, 'artifacts', appId, 'public', 'data', 'textbooks');
+      onSnapshot(colRef, (snap) => {
+        const data = snap.docs.map(doc => ({ ...doc.data(), id: doc.id }));
+        setInventory(data);
+        setIsLoading(false);
+      });
+    });
+  }, [user]);
+
+  // 🚨 [에러 수정] 화면을 그리기 전에 모든 Hook(useMemo)을 상단에 모아야 합니다!
+  const gradeList = useMemo(() => [...new Set(inventory.map(i => i.grade))].filter(Boolean).sort(), [inventory]);
+  const curriculumList = useMemo(() => [...new Set(inventory.map(i => i.curriculum))].filter(Boolean).sort(), [inventory]);
+  const publisherList = useMemo(() => [...new Set(inventory.map(i => i.publisher))].filter(Boolean).sort(), [inventory]);
+
+  const filtered = useMemo(() => {
+    let res = inventory.filter(i => {
+      const matchGrade = filters.grade === '전체' || i.grade === filters.grade;
+      const matchCurr = filters.curriculum === '전체' || i.curriculum === filters.curriculum;
+      const matchPub = filters.publisher === '전체' || i.publisher === filters.publisher;
+      const matchSearch = i.subject?.toLowerCase().includes(searchQuery.toLowerCase());
+      return matchGrade && matchCurr && matchPub && matchSearch;
+    });
+    res.sort((a, b) => {
+      const vA = a[sortConfig.key], vB = b[sortConfig.key];
+      if (vA < vB) return sortConfig.direction === 'asc' ? -1 : 1;
+      if (vA > vB) return sortConfig.direction === 'asc' ? 1 : -1;
+      return 0;
+    });
+    return res;
+  }, [inventory, filters, searchQuery, sortConfig]);
+
+  const totalStock = useMemo(() => filtered.reduce((acc, i) => acc + (i.quantity || 0), 0), [filtered]);
+
   // 로그인 처리
   const handleLogin = async (e) => {
     e.preventDefault();
@@ -193,90 +250,6 @@ export default function App() {
       }
     }
   };
-
-  // 2. 실시간 데이터 구독 (로그인 된 경우만)
-  useEffect(() => {
-    if (!user) return;
-    setIsLoading(true);
-
-    const checkAndInit = async () => {
-      const colRef = collection(db, 'artifacts', appId, 'public', 'data', 'textbooks');
-      const snap = await getDocs(colRef);
-      if (snap.empty) {
-        const sampleDocRef = doc(db, 'artifacts', appId, 'public', 'data', 'config', 'customSample');
-        const sampleSnap = await getDoc(sampleDocRef);
-        let dataToRestore = initialSampleData;
-        
-        if (sampleSnap.exists() && sampleSnap.data().data) {
-          dataToRestore = sampleSnap.data().data;
-        }
-
-        const batch = writeBatch(db);
-        dataToRestore.forEach((item, idx) => batch.set(doc(colRef, item.id || `sample_${idx}`), { ...item, order: idx }));
-        await batch.commit();
-      }
-    };
-
-    checkAndInit().then(() => {
-      const colRef = collection(db, 'artifacts', appId, 'public', 'data', 'textbooks');
-      onSnapshot(colRef, (snap) => {
-        const data = snap.docs.map(doc => ({ ...doc.data(), id: doc.id }));
-        setInventory(data);
-        setIsLoading(false);
-      });
-    });
-  }, [user]);
-
-  // 로딩 화면
-  if (authLoading) {
-    return <div className="min-h-screen flex items-center justify-center bg-[#f2f4f6]"><div className="animate-pulse text-xl font-bold text-slate-400">시스템 준비 중...</div></div>;
-  }
-
-  // 로그인 화면 렌더링
-  if (!user) {
-    return (
-      <div className="min-h-screen bg-[#f2f4f6] flex items-center justify-center p-4 selection:bg-blue-100">
-        <div className="bg-white p-8 sm:p-10 rounded-[40px] shadow-xl w-full max-w-md animate-in fade-in slide-in-from-bottom-8 duration-500">
-          <div className="w-16 h-16 bg-blue-50 text-blue-600 rounded-full flex items-center justify-center mx-auto mb-6">
-            <BookOpen className="w-8 h-8" />
-          </div>
-          <h1 className="text-2xl font-black text-center text-[#191f28] mb-2">갈매중 교과서 관리</h1>
-          <p className="text-center text-slate-500 text-sm font-medium mb-8">담당자 계정으로 로그인해주세요.</p>
-          
-          <form className="space-y-4">
-            <div className="space-y-1.5">
-              <label className="text-xs font-bold text-slate-500 ml-1">이메일 (아이디)</label>
-              <div className="relative">
-                <User className="w-5 h-5 absolute left-4 top-1/2 -translate-y-1/2 text-slate-400" />
-                <input type="email" value={email} onChange={e=>setEmail(e.target.value)} className="w-full pl-12 pr-4 py-4 bg-[#f2f4f6] rounded-2xl border-none focus:ring-2 focus:ring-blue-500 font-bold text-[#191f28] outline-none transition-all" placeholder="admin@galmae.kr" />
-              </div>
-            </div>
-            <div className="space-y-1.5">
-              <label className="text-xs font-bold text-slate-500 ml-1">비밀번호</label>
-              <div className="relative">
-                <Lock className="w-5 h-5 absolute left-4 top-1/2 -translate-y-1/2 text-slate-400" />
-                <input type="password" value={password} onChange={e=>setPassword(e.target.value)} className="w-full pl-12 pr-4 py-4 bg-[#f2f4f6] rounded-2xl border-none focus:ring-2 focus:ring-blue-500 font-bold text-[#191f28] outline-none transition-all" placeholder="••••••••" />
-              </div>
-            </div>
-            
-            <div className="pt-4 flex flex-col gap-3">
-              <button onClick={handleLogin} className="w-full py-4 bg-blue-600 hover:bg-blue-700 text-white font-black rounded-2xl shadow-lg shadow-blue-200 transition-all active:scale-95 text-lg">
-                로그인
-              </button>
-              <button onClick={handleRegister} className="w-full py-4 bg-white border-2 border-slate-200 text-slate-600 hover:bg-slate-50 font-black rounded-2xl transition-all active:scale-95">
-                새 계정 등록하기
-              </button>
-            </div>
-          </form>
-        </div>
-      </div>
-    );
-  }
-
-  // --- 메인 앱 로직 ---
-  const gradeList = useMemo(() => [...new Set(inventory.map(i => i.grade))].filter(Boolean).sort(), [inventory]);
-  const curriculumList = useMemo(() => [...new Set(inventory.map(i => i.curriculum))].filter(Boolean).sort(), [inventory]);
-  const publisherList = useMemo(() => [...new Set(inventory.map(i => i.publisher))].filter(Boolean).sort(), [inventory]);
 
   const handleQuickFilter = (type, value) => {
     if (editingId !== null) return;
@@ -359,24 +332,52 @@ export default function App() {
     setSortConfig({ key, direction });
   };
 
-  const filtered = useMemo(() => {
-    let res = inventory.filter(i => {
-      const matchGrade = filters.grade === '전체' || i.grade === filters.grade;
-      const matchCurr = filters.curriculum === '전체' || i.curriculum === filters.curriculum;
-      const matchPub = filters.publisher === '전체' || i.publisher === filters.publisher;
-      const matchSearch = i.subject?.toLowerCase().includes(searchQuery.toLowerCase());
-      return matchGrade && matchCurr && matchPub && matchSearch;
-    });
-    res.sort((a, b) => {
-      const vA = a[sortConfig.key], vB = b[sortConfig.key];
-      if (vA < vB) return sortConfig.direction === 'asc' ? -1 : 1;
-      if (vA > vB) return sortConfig.direction === 'asc' ? 1 : -1;
-      return 0;
-    });
-    return res;
-  }, [inventory, filters, searchQuery, sortConfig]);
+  // ----------------------------------------------------------------------
+  // 로딩 및 로그인 화면 (Hook들이 다 불린 이후에 화면을 갈라줍니다!)
+  // ----------------------------------------------------------------------
+  if (authLoading) {
+    return <div className="min-h-screen flex items-center justify-center bg-[#f2f4f6]"><div className="animate-pulse text-xl font-bold text-slate-400">시스템 준비 중...</div></div>;
+  }
 
-  const totalStock = useMemo(() => filtered.reduce((acc, i) => acc + (i.quantity || 0), 0), [filtered]);
+  if (!user) {
+    return (
+      <div className="min-h-screen bg-[#f2f4f6] flex items-center justify-center p-4 selection:bg-blue-100">
+        <div className="bg-white p-8 sm:p-10 rounded-[40px] shadow-xl w-full max-w-md animate-in fade-in slide-in-from-bottom-8 duration-500">
+          <div className="w-16 h-16 bg-blue-50 text-blue-600 rounded-full flex items-center justify-center mx-auto mb-6">
+            <BookOpen className="w-8 h-8" />
+          </div>
+          <h1 className="text-2xl font-black text-center text-[#191f28] mb-2">갈매중 교과서 관리</h1>
+          <p className="text-center text-slate-500 text-sm font-medium mb-8">담당자 계정으로 로그인해주세요.</p>
+          
+          <form className="space-y-4">
+            <div className="space-y-1.5">
+              <label className="text-xs font-bold text-slate-500 ml-1">이메일 (아이디)</label>
+              <div className="relative">
+                <User className="w-5 h-5 absolute left-4 top-1/2 -translate-y-1/2 text-slate-400" />
+                <input type="email" value={email} onChange={e=>setEmail(e.target.value)} className="w-full pl-12 pr-4 py-4 bg-[#f2f4f6] rounded-2xl border-none focus:ring-2 focus:ring-blue-500 font-bold text-[#191f28] outline-none transition-all" placeholder="admin@galmae.kr" />
+              </div>
+            </div>
+            <div className="space-y-1.5">
+              <label className="text-xs font-bold text-slate-500 ml-1">비밀번호</label>
+              <div className="relative">
+                <Lock className="w-5 h-5 absolute left-4 top-1/2 -translate-y-1/2 text-slate-400" />
+                <input type="password" value={password} onChange={e=>setPassword(e.target.value)} className="w-full pl-12 pr-4 py-4 bg-[#f2f4f6] rounded-2xl border-none focus:ring-2 focus:ring-blue-500 font-bold text-[#191f28] outline-none transition-all" placeholder="••••••••" />
+              </div>
+            </div>
+            
+            <div className="pt-4 flex flex-col gap-3">
+              <button onClick={handleLogin} className="w-full py-4 bg-blue-600 hover:bg-blue-700 text-white font-black rounded-2xl shadow-lg shadow-blue-200 transition-all active:scale-95 text-lg">
+                로그인
+              </button>
+              <button onClick={handleRegister} className="w-full py-4 bg-white border-2 border-slate-200 text-slate-600 hover:bg-slate-50 font-black rounded-2xl transition-all active:scale-95">
+                새 계정 등록하기
+              </button>
+            </div>
+          </form>
+        </div>
+      </div>
+    );
+  }
 
   return (
     <div className="min-h-screen bg-[#f2f4f6] font-sans text-[#333d4b] pb-24 selection:bg-blue-100">
@@ -388,6 +389,7 @@ export default function App() {
           <span className="text-[10px] sm:text-xs font-black text-emerald-600 uppercase tracking-widest">Live</span>
         </div>
         <div className="flex items-center gap-2">
+          {/* 비밀번호 변경 버튼 (톱니바퀴 아이콘) */}
           <button onClick={() => setShowPwdModal(true)} className="p-2 text-slate-500 hover:text-blue-600 bg-slate-50 rounded-full transition-colors flex items-center justify-center">
             <Settings className="w-4 h-4 sm:w-5 sm:h-5" />
           </button>
