@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useMemo, useRef } from 'react';
-import { Search, Plus, Minus, Download, BookOpen, Layers, RefreshCw, Edit2, Check, X, Trash2, PlusCircle, FilterX, ChevronDown, Cloud, AlertCircle, Upload, Table as TableIcon, Save, Eraser, RotateCcw, Lock, LogOut, Key, Settings } from 'lucide-react';
+import { Search, Plus, Minus, Download, BookOpen, Layers, RefreshCw, Edit2, Check, X, Trash2, PlusCircle, FilterX, ChevronDown, Cloud, AlertCircle, Upload, Table as TableIcon, Save, Eraser, RotateCcw, Lock, LogOut, Key, Settings, HelpCircle } from 'lucide-react';
 import { initializeApp } from 'firebase/app';
-import { getAuth, signInWithEmailAndPassword, createUserWithEmailAndPassword, updatePassword, signOut, onAuthStateChanged } from 'firebase/auth';
+import { getAuth, signInWithCustomToken, signInAnonymously, onAuthStateChanged } from 'firebase/auth';
 import { getFirestore, collection, onSnapshot, doc, setDoc, updateDoc, writeBatch, deleteDoc, getDocs, getDoc } from 'firebase/firestore';
 
 // =====================================================================
@@ -21,9 +21,6 @@ const app = initializeApp(firebaseConfig);
 const auth = getAuth(app);
 const db = getFirestore(app);
 const appId = typeof __app_id !== 'undefined' ? __app_id : 'textbook-inventory-v3'; 
-
-// 고정된 관리자 이메일 (화면에는 보이지 않지만 시스템 내부적으로 사용됩니다)
-const ADMIN_EMAIL = "admin@galmae.kr";
 
 // --- 초기 시스템 샘플 데이터 ---
 const initialSampleData = [
@@ -123,7 +120,9 @@ export default function App() {
   const [user, setUser] = useState(null);
   const [authLoading, setAuthLoading] = useState(true);
   
-  // 로그인 폼 상태 (4자리 PIN)
+  // 로그인 및 인증 상태 관리
+  const [isLoggedIn, setIsLoggedIn] = useState(false);
+  const [adminConfig, setAdminConfig] = useState(null);
   const [pin, setPin] = useState('');
   
   // 비밀번호 변경 모달 상태
@@ -147,18 +146,55 @@ export default function App() {
   const [filters, setFilters] = useState({ grade: '전체', curriculum: '전체', publisher: '전체' });
   const [sortConfig, setSortConfig] = useState({ key: 'order', direction: 'asc' });
 
-  // 1. 인증 상태 확인 (자동 로그인 처리 포함)
+  // 1. 익명 인증 시작
   useEffect(() => {
+    const initAuth = async () => {
+      try {
+        if (typeof __initial_auth_token !== 'undefined' && __initial_auth_token) {
+          await signInWithCustomToken(auth, __initial_auth_token);
+        } else {
+          await signInAnonymously(auth);
+        }
+      } catch (error) {
+        console.error("인증 실패:", error);
+      }
+    };
+    initAuth();
     const unsubscribe = onAuthStateChanged(auth, (currentUser) => {
       setUser(currentUser);
-      setAuthLoading(false);
     });
     return () => unsubscribe();
   }, []);
 
-  // 2. 실시간 데이터 구독 (로그인 된 경우만)
+  // 2. 관리자 설정 및 자동 로그인 체크
   useEffect(() => {
     if (!user) return;
+    
+    const configRef = doc(db, 'artifacts', appId, 'public', 'data', 'config', 'adminSettings');
+    const unsubConfig = onSnapshot(configRef, async (docSnap) => {
+      if (!docSnap.exists()) {
+        // 처음 앱을 실행한 경우 기본 PIN 1234로 설정
+        await setDoc(configRef, { pin: "1234", authorizedUids: [] });
+      } else {
+        const data = docSnap.data();
+        setAdminConfig(data);
+        
+        // 내 기기(user.uid)가 승인된 기기 목록에 있는지 확인 (자동 로그인)
+        if (data.authorizedUids && data.authorizedUids.includes(user.uid)) {
+          setIsLoggedIn(true);
+        } else {
+          setIsLoggedIn(false);
+        }
+      }
+      setAuthLoading(false);
+    });
+
+    return () => unsubConfig();
+  }, [user]);
+
+  // 3. 재고 데이터 구독
+  useEffect(() => {
+    if (!user || !isLoggedIn) return;
     setIsLoading(true);
 
     const checkAndInit = async () => {
@@ -181,15 +217,16 @@ export default function App() {
 
     checkAndInit().then(() => {
       const colRef = collection(db, 'artifacts', appId, 'public', 'data', 'textbooks');
-      onSnapshot(colRef, (snap) => {
+      const unsub = onSnapshot(colRef, (snap) => {
         const data = snap.docs.map(doc => ({ ...doc.data(), id: doc.id }));
         setInventory(data);
         setIsLoading(false);
       });
+      return unsub;
     });
-  }, [user]);
+  }, [user, isLoggedIn]);
 
-  // Hook들은 상단에 위치
+  // 계산용 Hook들
   const gradeList = useMemo(() => [...new Set(inventory.map(i => i.grade))].filter(Boolean).sort(), [inventory]);
   const curriculumList = useMemo(() => [...new Set(inventory.map(i => i.curriculum))].filter(Boolean).sort(), [inventory]);
   const publisherList = useMemo(() => [...new Set(inventory.map(i => i.publisher))].filter(Boolean).sort(), [inventory]);
@@ -213,50 +250,40 @@ export default function App() {
 
   const totalStock = useMemo(() => filtered.reduce((acc, i) => acc + (i.quantity || 0), 0), [filtered]);
 
-  // --- 4자리 PIN 전용 로그인 처리 ---
+  // --- 직관적인 4자리 PIN 로그인 처리 ---
   const handleLogin = async (e) => {
     e.preventDefault();
-    if (pin.length !== 4) return alert("PIN 번호 4자리를 정확히 입력해주세요.");
-    try {
-      // Firebase는 6자리를 요구하므로 뒤에 "00"을 붙여서 인증합니다.
-      await signInWithEmailAndPassword(auth, ADMIN_EMAIL, pin + "00");
-    } catch (error) {
-      alert("로그인 실패: PIN 번호가 틀렸거나 아직 등록되지 않았습니다.\n(처음이시라면 아래 '새 PIN으로 등록' 버튼을 눌러주세요)");
+    if (pin.length !== 4) return alert("PIN 번호 4자리를 모두 입력해주세요.");
+    
+    if (adminConfig && pin === adminConfig.pin) {
+      // 내 기기(user.uid)를 승인된 기기 목록에 추가하여 자동 로그인되게 만듦
+      const configRef = doc(db, 'artifacts', appId, 'public', 'data', 'config', 'adminSettings');
+      const newUids = [...(adminConfig.authorizedUids || []), user.uid];
+      await updateDoc(configRef, { authorizedUids: newUids });
+    } else {
+      alert("PIN 번호가 틀렸습니다. 다시 시도해주세요.");
+      setPin('');
     }
   };
 
-  // --- 4자리 PIN 전용 회원가입 처리 ---
-  const handleRegister = async (e) => {
-    e.preventDefault();
-    if (pin.length !== 4) return alert("PIN 번호 4자리를 정확히 입력해주세요.");
-    try {
-      await createUserWithEmailAndPassword(auth, ADMIN_EMAIL, pin + "00");
-      alert("관리자 PIN이 성공적으로 등록되었습니다!");
-    } catch (error) {
-      if (error.code === 'auth/email-already-in-use') {
-        alert("이미 등록된 기기/계정입니다. 입력하신 PIN으로 로그인을 시도해주세요.");
-      } else {
-        alert("등록 실패: " + error.message);
-      }
-    }
+  // --- 로그아웃 처리 (승인 목록에서 내 기기 제거) ---
+  const handleLogout = async () => {
+    if (!adminConfig) return;
+    const configRef = doc(db, 'artifacts', appId, 'public', 'data', 'config', 'adminSettings');
+    const newUids = (adminConfig.authorizedUids || []).filter(uid => uid !== user.uid);
+    await updateDoc(configRef, { authorizedUids: newUids });
   };
 
   // --- PIN 변경 처리 ---
   const handleChangePassword = async (e) => {
     e.preventDefault();
-    if (newPin.length !== 4) return alert("새로운 PIN 번호 4자리를 입력해주세요.");
-    try {
-      await updatePassword(auth.currentUser, newPin + "00");
-      alert("PIN 번호가 성공적으로 변경되었습니다.");
-      setShowPwdModal(false);
-      setNewPin('');
-    } catch (error) {
-      if (error.code === 'auth/requires-recent-login') {
-        alert("보안을 위해 기기에서 로그아웃 한 뒤 다시 로그인하여 변경해주세요.");
-      } else {
-        alert("비밀번호 변경 실패: " + error.message);
-      }
-    }
+    if (newPin.length !== 4) return alert("새로운 PIN 번호 4자리를 정확히 입력해주세요.");
+    
+    const configRef = doc(db, 'artifacts', appId, 'public', 'data', 'config', 'adminSettings');
+    await updateDoc(configRef, { pin: newPin });
+    alert("PIN 번호가 성공적으로 변경되었습니다.");
+    setShowPwdModal(false);
+    setNewPin('');
   };
 
   const handleQuickFilter = (type, value) => {
@@ -341,27 +368,26 @@ export default function App() {
   };
 
   // ----------------------------------------------------------------------
-  // 로딩 및 로그인 화면 (4자리 PIN 전용 화면)
+  // 로딩 및 로그인 화면
   // ----------------------------------------------------------------------
   if (authLoading) {
     return <div className="min-h-screen flex items-center justify-center bg-[#f2f4f6]"><div className="animate-pulse text-xl font-bold text-slate-400">시스템 준비 중...</div></div>;
   }
 
-  if (!user) {
+  // 로그인되지 않은 상태 (PIN 입력 화면)
+  if (!isLoggedIn) {
     return (
       <div className="min-h-screen bg-[#f2f4f6] flex items-center justify-center p-4 selection:bg-blue-100">
         <div className="bg-white p-8 sm:p-10 rounded-[40px] shadow-xl w-full max-w-md animate-in fade-in slide-in-from-bottom-8 duration-500">
           <div className="w-16 h-16 bg-blue-50 text-blue-600 rounded-full flex items-center justify-center mx-auto mb-6">
-            <BookOpen className="w-8 h-8" />
+            <Lock className="w-8 h-8" />
           </div>
-          <h1 className="text-2xl font-black text-center text-[#191f28] mb-2">갈매중 교과서 관리</h1>
-          <p className="text-center text-slate-500 text-sm font-medium mb-8">안전한 관리를 위해 관리자 암호를 입력해주세요.</p>
+          <h1 className="text-2xl font-black text-center text-[#191f28] mb-2">관리자 모드 접속</h1>
+          <p className="text-center text-slate-500 text-sm font-medium mb-8">안전한 관리를 위해 4자리 PIN을 입력해주세요.</p>
           
-          <form className="space-y-6">
+          <form className="space-y-6" onSubmit={handleLogin}>
             <div className="space-y-2 text-center">
-              <label className="text-xs font-bold text-slate-500">관리자 PIN 번호 (4자리 숫자)</label>
               <div className="relative max-w-[200px] mx-auto">
-                <Lock className="w-5 h-5 absolute left-4 top-1/2 -translate-y-1/2 text-slate-400" />
                 <input 
                   type="password" 
                   maxLength={4}
@@ -369,18 +395,25 @@ export default function App() {
                   inputMode="numeric"
                   value={pin} 
                   onChange={e=>setPin(e.target.value.replace(/[^0-9]/g, ''))} 
-                  className="w-full pl-12 pr-4 py-4 bg-[#f2f4f6] rounded-2xl border-none focus:ring-2 focus:ring-blue-500 font-black text-2xl tracking-[0.5em] text-[#191f28] outline-none transition-all text-center" 
-                  placeholder="••••" 
+                  className="w-full py-4 bg-[#f2f4f6] rounded-2xl border-none focus:ring-2 focus:ring-blue-500 font-black text-2xl tracking-[0.5em] text-[#191f28] outline-none transition-all text-center placeholder:text-slate-300 placeholder:tracking-normal" 
+                  placeholder="숫자 4자리" 
+                  autoFocus
                 />
               </div>
             </div>
             
             <div className="pt-2 flex flex-col gap-3">
-              <button onClick={handleLogin} className="w-full py-4 bg-blue-600 hover:bg-blue-700 text-white font-black rounded-2xl shadow-lg shadow-blue-200 transition-all active:scale-95 text-lg">
+              <button type="submit" className="w-full py-4 bg-blue-600 hover:bg-blue-700 text-white font-black rounded-2xl shadow-lg shadow-blue-200 transition-all active:scale-95 text-lg">
                 접속하기
               </button>
-              <button onClick={handleRegister} className="w-full py-4 bg-white border-2 border-slate-200 text-slate-600 hover:bg-slate-50 font-black rounded-2xl transition-all active:scale-95">
-                새 PIN으로 등록 (최초 1회)
+              
+              {/* 비밀번호 확인 버튼 */}
+              <button 
+                type="button" 
+                onClick={() => alert(`현재 설정된 관리자 PIN 번호는 [ ${adminConfig?.pin || '1234'} ] 입니다.\n로그인 후 우측 상단 톱니바퀴를 눌러 변경하실 수 있습니다.`)} 
+                className="w-full py-4 bg-white border-2 border-slate-200 text-slate-500 hover:bg-slate-50 font-black rounded-2xl transition-all active:scale-95 flex items-center justify-center gap-2"
+              >
+                <HelpCircle className="w-5 h-5" /> 현재 PIN 번호 확인하기
               </button>
             </div>
           </form>
@@ -389,6 +422,7 @@ export default function App() {
     );
   }
 
+  // --- 메인 관리 화면 ---
   return (
     <div className="min-h-screen bg-[#f2f4f6] font-sans text-[#333d4b] pb-24 selection:bg-blue-100">
       
@@ -403,7 +437,8 @@ export default function App() {
           <button onClick={() => setShowPwdModal(true)} className="p-2 text-slate-500 hover:text-blue-600 bg-slate-50 rounded-full transition-colors flex items-center justify-center" title="PIN 번호 변경">
             <Settings className="w-4 h-4 sm:w-5 sm:h-5" />
           </button>
-          <button onClick={() => signOut(auth)} className="p-2 text-slate-500 hover:text-rose-500 bg-slate-50 rounded-full transition-colors flex items-center justify-center" title="로그아웃">
+          {/* 로그아웃 버튼 */}
+          <button onClick={handleLogout} className="p-2 text-slate-500 hover:text-rose-500 bg-slate-50 rounded-full transition-colors flex items-center justify-center" title="로그아웃">
             <LogOut className="w-4 h-4 sm:w-5 sm:h-5" />
           </button>
         </div>
@@ -414,7 +449,7 @@ export default function App() {
         <header className="flex flex-col sm:flex-row gap-4">
           <div className="flex-1 bg-white p-6 rounded-[28px] shadow-sm flex flex-col justify-center relative overflow-hidden">
             <h1 className="text-2xl sm:text-3xl font-black text-[#191f28] tracking-tight relative z-10">갈매중 스마트 교과서 관리</h1>
-            <p className="text-slate-400 font-medium text-sm mt-1 z-10 relative">관리자 모드 접속 중</p>
+            <p className="text-blue-500 font-bold text-sm mt-1 z-10 relative">관리자 모드 접속 중</p>
             <BookOpen className="absolute -right-6 -bottom-6 w-32 h-32 text-slate-50 opacity-50 rotate-[-10deg]" />
           </div>
 
