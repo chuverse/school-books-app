@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useMemo, useRef } from 'react';
-import { Search, Plus, Minus, Download, BookOpen, Layers, RefreshCw, Edit2, Check, X, Trash2, PlusCircle, FilterX, ChevronDown, Cloud, AlertCircle, Upload, Table as TableIcon, Save, Eraser, RotateCcw, Lock, User, LogOut, Key, Settings } from 'lucide-react';
+import { Search, Plus, Minus, Download, BookOpen, Layers, RefreshCw, Edit2, Check, X, Trash2, PlusCircle, FilterX, ChevronDown, Cloud, AlertCircle, Upload, Table as TableIcon, Save, Eraser, RotateCcw, Lock, LogOut, Key, Settings } from 'lucide-react';
 import { initializeApp } from 'firebase/app';
 import { getAuth, signInWithEmailAndPassword, createUserWithEmailAndPassword, updatePassword, signOut, onAuthStateChanged } from 'firebase/auth';
 import { getFirestore, collection, onSnapshot, doc, setDoc, updateDoc, writeBatch, deleteDoc, getDocs, getDoc } from 'firebase/firestore';
@@ -21,6 +21,9 @@ const app = initializeApp(firebaseConfig);
 const auth = getAuth(app);
 const db = getFirestore(app);
 const appId = typeof __app_id !== 'undefined' ? __app_id : 'textbook-inventory-v3'; 
+
+// 고정된 관리자 이메일 (화면에는 보이지 않지만 시스템 내부적으로 사용됩니다)
+const ADMIN_EMAIL = "admin@galmae.kr";
 
 // --- 초기 시스템 샘플 데이터 ---
 const initialSampleData = [
@@ -120,13 +123,12 @@ export default function App() {
   const [user, setUser] = useState(null);
   const [authLoading, setAuthLoading] = useState(true);
   
-  // 로그인 폼 상태
-  const [email, setEmail] = useState('');
-  const [password, setPassword] = useState('');
+  // 로그인 폼 상태 (4자리 PIN)
+  const [pin, setPin] = useState('');
   
   // 비밀번호 변경 모달 상태
   const [showPwdModal, setShowPwdModal] = useState(false);
-  const [newPassword, setNewPassword] = useState('');
+  const [newPin, setNewPin] = useState('');
 
   const [inventory, setInventory] = useState([]);
   const [searchQuery, setSearchQuery] = useState('');
@@ -145,7 +147,7 @@ export default function App() {
   const [filters, setFilters] = useState({ grade: '전체', curriculum: '전체', publisher: '전체' });
   const [sortConfig, setSortConfig] = useState({ key: 'order', direction: 'asc' });
 
-  // 1. 인증 상태 확인
+  // 1. 인증 상태 확인 (자동 로그인 처리 포함)
   useEffect(() => {
     const unsubscribe = onAuthStateChanged(auth, (currentUser) => {
       setUser(currentUser);
@@ -187,7 +189,7 @@ export default function App() {
     });
   }, [user]);
 
-  // 🚨 [에러 수정] 화면을 그리기 전에 모든 Hook(useMemo)을 상단에 모아야 합니다!
+  // Hook들은 상단에 위치
   const gradeList = useMemo(() => [...new Set(inventory.map(i => i.grade))].filter(Boolean).sort(), [inventory]);
   const curriculumList = useMemo(() => [...new Set(inventory.map(i => i.curriculum))].filter(Boolean).sort(), [inventory]);
   const publisherList = useMemo(() => [...new Set(inventory.map(i => i.publisher))].filter(Boolean).sort(), [inventory]);
@@ -211,37 +213,43 @@ export default function App() {
 
   const totalStock = useMemo(() => filtered.reduce((acc, i) => acc + (i.quantity || 0), 0), [filtered]);
 
-  // 로그인 처리
+  // --- 4자리 PIN 전용 로그인 처리 ---
   const handleLogin = async (e) => {
     e.preventDefault();
+    if (pin.length !== 4) return alert("PIN 번호 4자리를 정확히 입력해주세요.");
     try {
-      await signInWithEmailAndPassword(auth, email, password);
+      // Firebase는 6자리를 요구하므로 뒤에 "00"을 붙여서 인증합니다.
+      await signInWithEmailAndPassword(auth, ADMIN_EMAIL, pin + "00");
     } catch (error) {
-      alert("로그인 실패: 이메일이나 비밀번호를 확인해주세요.\n(계정이 없다면 '새 계정 등록'을 눌러주세요)");
+      alert("로그인 실패: PIN 번호가 틀렸거나 아직 등록되지 않았습니다.\n(처음이시라면 아래 '새 PIN으로 등록' 버튼을 눌러주세요)");
     }
   };
 
-  // 회원가입 (계정 생성) 처리
+  // --- 4자리 PIN 전용 회원가입 처리 ---
   const handleRegister = async (e) => {
     e.preventDefault();
-    if (password.length < 6) return alert("비밀번호는 6자리 이상이어야 합니다.");
+    if (pin.length !== 4) return alert("PIN 번호 4자리를 정확히 입력해주세요.");
     try {
-      await createUserWithEmailAndPassword(auth, email, password);
-      alert("계정이 성공적으로 등록되었습니다!");
+      await createUserWithEmailAndPassword(auth, ADMIN_EMAIL, pin + "00");
+      alert("관리자 PIN이 성공적으로 등록되었습니다!");
     } catch (error) {
-      alert("등록 실패: 이미 사용중인 이메일이거나 형식이 잘못되었습니다.");
+      if (error.code === 'auth/email-already-in-use') {
+        alert("이미 등록된 기기/계정입니다. 입력하신 PIN으로 로그인을 시도해주세요.");
+      } else {
+        alert("등록 실패: " + error.message);
+      }
     }
   };
 
-  // 비밀번호 변경 처리
+  // --- PIN 변경 처리 ---
   const handleChangePassword = async (e) => {
     e.preventDefault();
-    if (newPassword.length < 6) return alert("비밀번호는 6자리 이상이어야 합니다.");
+    if (newPin.length !== 4) return alert("새로운 PIN 번호 4자리를 입력해주세요.");
     try {
-      await updatePassword(auth.currentUser, newPassword);
-      alert("비밀번호가 성공적으로 변경되었습니다.");
+      await updatePassword(auth.currentUser, newPin + "00");
+      alert("PIN 번호가 성공적으로 변경되었습니다.");
       setShowPwdModal(false);
-      setNewPassword('');
+      setNewPin('');
     } catch (error) {
       if (error.code === 'auth/requires-recent-login') {
         alert("보안을 위해 기기에서 로그아웃 한 뒤 다시 로그인하여 변경해주세요.");
@@ -333,7 +341,7 @@ export default function App() {
   };
 
   // ----------------------------------------------------------------------
-  // 로딩 및 로그인 화면 (Hook들이 다 불린 이후에 화면을 갈라줍니다!)
+  // 로딩 및 로그인 화면 (4자리 PIN 전용 화면)
   // ----------------------------------------------------------------------
   if (authLoading) {
     return <div className="min-h-screen flex items-center justify-center bg-[#f2f4f6]"><div className="animate-pulse text-xl font-bold text-slate-400">시스템 준비 중...</div></div>;
@@ -347,30 +355,32 @@ export default function App() {
             <BookOpen className="w-8 h-8" />
           </div>
           <h1 className="text-2xl font-black text-center text-[#191f28] mb-2">갈매중 교과서 관리</h1>
-          <p className="text-center text-slate-500 text-sm font-medium mb-8">담당자 계정으로 로그인해주세요.</p>
+          <p className="text-center text-slate-500 text-sm font-medium mb-8">안전한 관리를 위해 관리자 암호를 입력해주세요.</p>
           
-          <form className="space-y-4">
-            <div className="space-y-1.5">
-              <label className="text-xs font-bold text-slate-500 ml-1">이메일 (아이디)</label>
-              <div className="relative">
-                <User className="w-5 h-5 absolute left-4 top-1/2 -translate-y-1/2 text-slate-400" />
-                <input type="email" value={email} onChange={e=>setEmail(e.target.value)} className="w-full pl-12 pr-4 py-4 bg-[#f2f4f6] rounded-2xl border-none focus:ring-2 focus:ring-blue-500 font-bold text-[#191f28] outline-none transition-all" placeholder="admin@galmae.kr" />
-              </div>
-            </div>
-            <div className="space-y-1.5">
-              <label className="text-xs font-bold text-slate-500 ml-1">비밀번호</label>
-              <div className="relative">
+          <form className="space-y-6">
+            <div className="space-y-2 text-center">
+              <label className="text-xs font-bold text-slate-500">관리자 PIN 번호 (4자리 숫자)</label>
+              <div className="relative max-w-[200px] mx-auto">
                 <Lock className="w-5 h-5 absolute left-4 top-1/2 -translate-y-1/2 text-slate-400" />
-                <input type="password" value={password} onChange={e=>setPassword(e.target.value)} className="w-full pl-12 pr-4 py-4 bg-[#f2f4f6] rounded-2xl border-none focus:ring-2 focus:ring-blue-500 font-bold text-[#191f28] outline-none transition-all" placeholder="••••••••" />
+                <input 
+                  type="password" 
+                  maxLength={4}
+                  pattern="[0-9]*"
+                  inputMode="numeric"
+                  value={pin} 
+                  onChange={e=>setPin(e.target.value.replace(/[^0-9]/g, ''))} 
+                  className="w-full pl-12 pr-4 py-4 bg-[#f2f4f6] rounded-2xl border-none focus:ring-2 focus:ring-blue-500 font-black text-2xl tracking-[0.5em] text-[#191f28] outline-none transition-all text-center" 
+                  placeholder="••••" 
+                />
               </div>
             </div>
             
-            <div className="pt-4 flex flex-col gap-3">
+            <div className="pt-2 flex flex-col gap-3">
               <button onClick={handleLogin} className="w-full py-4 bg-blue-600 hover:bg-blue-700 text-white font-black rounded-2xl shadow-lg shadow-blue-200 transition-all active:scale-95 text-lg">
-                로그인
+                접속하기
               </button>
               <button onClick={handleRegister} className="w-full py-4 bg-white border-2 border-slate-200 text-slate-600 hover:bg-slate-50 font-black rounded-2xl transition-all active:scale-95">
-                새 계정 등록하기
+                새 PIN으로 등록 (최초 1회)
               </button>
             </div>
           </form>
@@ -390,10 +400,10 @@ export default function App() {
         </div>
         <div className="flex items-center gap-2">
           {/* 비밀번호 변경 버튼 (톱니바퀴 아이콘) */}
-          <button onClick={() => setShowPwdModal(true)} className="p-2 text-slate-500 hover:text-blue-600 bg-slate-50 rounded-full transition-colors flex items-center justify-center">
+          <button onClick={() => setShowPwdModal(true)} className="p-2 text-slate-500 hover:text-blue-600 bg-slate-50 rounded-full transition-colors flex items-center justify-center" title="PIN 번호 변경">
             <Settings className="w-4 h-4 sm:w-5 sm:h-5" />
           </button>
-          <button onClick={() => signOut(auth)} className="p-2 text-slate-500 hover:text-rose-500 bg-slate-50 rounded-full transition-colors flex items-center justify-center">
+          <button onClick={() => signOut(auth)} className="p-2 text-slate-500 hover:text-rose-500 bg-slate-50 rounded-full transition-colors flex items-center justify-center" title="로그아웃">
             <LogOut className="w-4 h-4 sm:w-5 sm:h-5" />
           </button>
         </div>
@@ -404,7 +414,7 @@ export default function App() {
         <header className="flex flex-col sm:flex-row gap-4">
           <div className="flex-1 bg-white p-6 rounded-[28px] shadow-sm flex flex-col justify-center relative overflow-hidden">
             <h1 className="text-2xl sm:text-3xl font-black text-[#191f28] tracking-tight relative z-10">갈매중 스마트 교과서 관리</h1>
-            <p className="text-slate-400 font-medium text-sm mt-1 z-10 relative">{user.email} 계정 접속 중</p>
+            <p className="text-slate-400 font-medium text-sm mt-1 z-10 relative">관리자 모드 접속 중</p>
             <BookOpen className="absolute -right-6 -bottom-6 w-32 h-32 text-slate-50 opacity-50 rotate-[-10deg]" />
           </div>
 
@@ -664,17 +674,20 @@ export default function App() {
             <div className="w-14 h-14 bg-slate-100 text-slate-600 rounded-full flex items-center justify-center mx-auto mb-4">
               <Key className="w-6 h-6" />
             </div>
-            <h3 className="text-lg sm:text-xl font-black text-[#191f28] mb-2 text-center">비밀번호 변경</h3>
-            <p className="text-[13px] text-slate-500 mb-6 text-center">보안을 위해 6자리 이상으로 설정해주세요.</p>
+            <h3 className="text-lg sm:text-xl font-black text-[#191f28] mb-2 text-center">PIN 번호 변경</h3>
+            <p className="text-[13px] text-slate-500 mb-6 text-center">보안을 위해 4자리 숫자로 설정해주세요.</p>
             <input 
               type="password" 
-              value={newPassword} 
-              onChange={(e) => setNewPassword(e.target.value)} 
-              placeholder="새 비밀번호 입력" 
-              className="w-full py-4 px-4 bg-[#f2f4f6] rounded-2xl border-none outline-none font-bold focus:ring-2 focus:ring-blue-500 mb-6 text-center"
+              maxLength={4}
+              pattern="[0-9]*"
+              inputMode="numeric"
+              value={newPin} 
+              onChange={(e) => setNewPin(e.target.value.replace(/[^0-9]/g, ''))} 
+              placeholder="••••" 
+              className="w-full py-4 px-4 bg-[#f2f4f6] rounded-2xl border-none outline-none font-black tracking-[0.5em] text-2xl focus:ring-2 focus:ring-blue-500 mb-6 text-center"
             />
             <div className="flex gap-2 sm:gap-3">
-              <button onClick={() => { setShowPwdModal(false); setNewPassword(''); }} className="flex-1 py-4 bg-[#f2f4f6] text-[#4e5968] font-bold rounded-2xl hover:bg-slate-200 transition-colors">닫기</button>
+              <button onClick={() => { setShowPwdModal(false); setNewPin(''); }} className="flex-1 py-4 bg-[#f2f4f6] text-[#4e5968] font-bold rounded-2xl hover:bg-slate-200 transition-colors">닫기</button>
               <button onClick={handleChangePassword} className="flex-1 py-4 bg-blue-600 text-white font-bold rounded-2xl hover:bg-blue-700 shadow-lg transition-colors">변경하기</button>
             </div>
           </div>
